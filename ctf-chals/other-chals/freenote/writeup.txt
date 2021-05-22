@@ -1,0 +1,47 @@
+1. This is a really better challenge compared to the previous one(stkof). For me , the most difficult part being figuring out the actual vulnerablity which would allow me to corrupt meta-data.
+
+2. There are checks on almost all option,with no possibility of heap overflows. However, the one problem being that the delete function does not check for the in use boolean. This can be leveraged to get something like a double free vulnerability.
+
+3.The structure of these notes seems to be:
+	in-use bool(8 bytes) 
+	size_t(8 bytes) 
+	char* text(8 bytes)
+
+There is also a global number indicating the total number of in-use notes and the total number of alllowed notes(0x100)
+
+4. I firstly create about 10 new notes of size 0x100. I then free the 0th and the 1st one. These are now merged into a free chunk of size 0x220. Then I free the 3rd and the 4th ones to get another free chunk of size 0x220. I didn't do anything to the second one as that would result in further merging which I didn't want.
+
+5. I now create a new note of double the original size,thereby getting the merged block of 0 and 1. This pointer goes to the index 0 on the global array. Note that the pointer for the chunk 1 is still in the array and hence with proper fake headers , it can be freed again.
+
+6. I however wanted a bit more spacing for my pointers , so i created a new note of double size(corresponding to the merge of 3,4). This pointer went to the 1st index in the array. Now, i have the pointer to both these in my array as well. I use this fact to try and get an heap address. If, I free the 3rd index now, is should get a leak to the main_arena in libc as the fd of this would point there and can be leaked using the list function.
+This is visualized as:
+
+	struct for 0,1
+	struct for 3,4
+	struct for 2
+	freed struct for 3rd(containing the same pointer as index 1 currently)
+
+7. I am more interested in a heap leak(because i need the address of the array containing these structs for the unlink later). To do this, I free the 6th and 7th index, thereby forming a freed chunk inserted in the doubly linked list. I free the 3rd index(also 1st index) to get the freed chunk's fd to point to the merged chunk of 6,7 which is on the heap. I then leak this using the list function and there I have it, a heap leak to calculate the heap base and the address of the struct array. Note that the 8th index chunk exists so that 6,7th don't merge with the top chunk.
+
+
+8. With this leak, i now target the freed chunk of 6,7 by creating a fake chunk within the part of 6th and fake headers to fake the 7th.(goes to the 3rd index) I give approprite fd and bk to the fake 6th to get to pass the checks using the leaked struct array address. Then i free the 7th index(which still contains the pointer) causing an unlink to write a address of 6th struct's pointer entry - 0x18 to be written to the pointer itself. 
+
+9. Now i overwrite the array using this to write a fake struct of size 8 bytes and in-use pointing to the got entry of puts to the array.
+The array is:
+	struct for 0,1
+	struct for 3,4
+	struct for 2 (the char pointer was writen to nullptr because the addr. pointer to this)
+	my_fake_struct:
+		0x1
+		0x8
+		elf.got['puts']
+
+	.
+	.
+	.
+
+10. Now i use the list function again to leak the address of puts, use that to get the base of libc. Use that to get the address to the "magic gadget" using one_gadget.
+
+11. Now i edit this index with one_gadget address (note: i used 8 bytes as the size for this struct so that i don't overwrite any other important data in the got and the edit function doesn't reallocate only if the preiously used size and the current length match).
+
+12. We get a shell as the call to puts with "Done" results in an execve call to give us the shell.

@@ -1,0 +1,19 @@
+I start by creating two chunks :A and B
+
+I create a fake chunk inside chunk A with appropriate fd and bk pointers to fulfill the p->fd->bk == p and p->bk->fd == p conditions and also overwrite the headers of chunk B such that it seems that the previous chunk is not in use(i.e. set to 0x90) and previous chunk size to 0x80,since my fake chunk began at B-0x80 
+
+After this I called free on the chunk B , thereby using the unlink feature to get the global pointer to the chunk A point to A-24 (essentially my fake chunk's p->fd)
+
+Now I write to this location such that the first entry of the pointer array is the got entry of free , the second is the got entry of puts and the third is the got entry of free again
+
+Now , I read the plt entry of puts into the address pointed to by the first entry i.e. free@got.Now calling free results in calling puts
+
+Then I call the free method on the second entry i.e. puts@got , thereby leaking a libc address so that i can defeat aslr. 
+
+With this info I calculate the base address of libc by subtracting the offset of puts in the given libc
+
+Now, it's almost over :). I calculate the address of the 'Magic Gadget' by adding the libc offset to the base address
+
+I finally write this address to the address of free@got again by writing to the third address pointed to by the third pointer(the first address has been nulled by the program)
+
+Now, as I call free again, I get the shell.
